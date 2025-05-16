@@ -1,3 +1,6 @@
+import logging
+logging.basicConfig(level=logging.INFO)
+logging.info("🚀 Biocerto.AI FastAPI starting...")
 import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
