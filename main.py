@@ -3,21 +3,20 @@ import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from transformers import AutoTokenizer, AutoModelForCausalLM, pipeline
+from transformers import AutoTokenizer, AutoModelForSeq2SeqLM, pipeline
 from langchain.llms import HuggingFacePipeline
 from langchain_community.document_loaders import PyPDFLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.vectorstores import FAISS
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain.chains import RetrievalQA
-import torch
 
 # ✅ Logging per debug
 logging.basicConfig(level=logging.INFO)
 logging.info("🚀 Biocerto.AI FastAPI starting...")
 
 # ✅ Istanzia FastAPI
-app = FastAPI(title="Biocerto.AI - RAG con Mistral")
+app = FastAPI(title="Biocerto.AI - RAG con modello leggero")
 
 # ✅ CORS per frontend
 app.add_middleware(
@@ -45,28 +44,16 @@ docs = splitter.split_documents(documents)
 embedding_model = HuggingFaceEmbeddings(model_name="BAAI/bge-large-en-v1.5")
 db = FAISS.from_documents(docs, embedding_model)
 
-# 🧠 Definizione placeholder per il modello
-llm = None
-qa_chain = None
+# 🧠 Modello LLM leggero per primo deploy (Flan-T5 base)
+model_id = "google/flan-t5-base"
+tokenizer = AutoTokenizer.from_pretrained(model_id)
+model = AutoModelForSeq2SeqLM.from_pretrained(model_id)
 
-# 🔁 Cache dei modelli Hugging Face
-os.environ["HF_HOME"] = "/mnt/cache/huggingface"
+hf_pipeline = pipeline("text2text-generation", model=model, tokenizer=tokenizer, max_new_tokens=256)
+llm = HuggingFacePipeline(pipeline=hf_pipeline)
 
-@app.on_event("startup")
-def load_model():
-    global llm, qa_chain
-    logging.info("🔁 Caricamento del modello Mistral in corso...")
-    model_id = "mistralai/Mistral-7B-Instruct-v0.2"
-    tokenizer = AutoTokenizer.from_pretrained(model_id)
-    model = AutoModelForCausalLM.from_pretrained(
-        model_id,
-        device_map="auto",
-        torch_dtype=torch.float16
-    )
-    hf_pipeline = pipeline("text-generation", model=model, tokenizer=tokenizer, max_new_tokens=512)
-    llm = HuggingFacePipeline(pipeline=hf_pipeline)
-    qa_chain = RetrievalQA.from_chain_type(llm=llm, retriever=db.as_retriever())
-    logging.info("✅ Modello Mistral caricato e pronto all'uso.")
+# 🔗 RetrievalQA
+qa_chain = RetrievalQA.from_chain_type(llm=llm, retriever=db.as_retriever())
 
 # 📩 Input schema
 class Question(BaseModel):
@@ -75,8 +62,5 @@ class Question(BaseModel):
 # ✅ Endpoint API
 @app.post("/ask")
 def ask_question(payload: Question):
-    global qa_chain
-    if qa_chain is None:
-        return {"answer": "Modello in fase di caricamento. Riprova tra qualche secondo."}
     response = qa_chain.run(payload.query)
     return {"answer": response}
